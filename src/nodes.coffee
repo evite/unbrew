@@ -1031,6 +1031,7 @@ exports.Class = class Class extends Base
   constructor: (@variable, @parent, @body = new Block) ->
     @boundFuncs = []
     @body.classBody = yes
+    console.log @body
 
   children: ['variable', 'parent', 'body']
 
@@ -1058,11 +1059,11 @@ exports.Class = class Class extends Base
 
   # Ensure that all functions bound to the instance are proxied in the
   # constructor.
-  addBoundFunctions: (o) ->
-    for bvar in @boundFuncs
-      lhs = (new Value (new Literal "this"), [new Access bvar]).compile o
-      @ctor.body.unshift new Literal "#{lhs} = #{utility 'bind', o}(#{lhs}, this)"
-    return
+#  addBoundFunctions: (o) ->
+#    for bvar in @boundFuncs
+#      lhs = (new Value (new Literal "this"), [new Access bvar]).compile o
+#      @ctor.body.unshift new Literal "#{lhs} = #{utility 'bind', o}(#{lhs}, this)"
+#    return
 
   # Merge the properties from a top-level object as prototypal properties
   # on the class.
@@ -1084,6 +1085,10 @@ exports.Class = class Class extends Base
             @externalCtor = o.classScope.freeVariable 'class'
             assign = new Assign new Literal(@externalCtor), func
         else
+          console.log 'assign!'
+          console.log node
+          console.log name
+          console.log assign
           if assign.variable.this
             func.static = yes
           else
@@ -1123,18 +1128,18 @@ exports.Class = class Class extends Base
 
   # Make sure that a constructor is defined for the class, and properly
   # configured.
-  ensureConstructor: (name) ->
-    if not @ctor
-      @ctor = new Code
-      if @externalCtor
-        @ctor.body.push new Literal "#{@externalCtor}.apply(this, arguments)"
-      else if @parent
-        @ctor.body.push new Literal "#{name}.__super__.constructor.apply(this, arguments)"
-      @ctor.body.makeReturn()
-      @body.expressions.unshift @ctor
-    @ctor.ctor = @ctor.name = name
-    @ctor.klass = null
-    @ctor.noReturn = yes
+#  ensureConstructor: (name) ->
+#    if not @ctor
+#      @ctor = new Code
+#      if @externalCtor
+#        @ctor.body.push new Literal "#{@externalCtor}.apply(this, arguments)"
+#      else if @parent
+#        @ctor.body.push new Literal "#{name}.__super__.constructor.apply(this, arguments)"
+#      @ctor.body.makeReturn()
+#      @body.expressions.unshift @ctor
+#    @ctor.ctor = @ctor.name = name
+#    @ctor.klass = null
+#    @ctor.noReturn = yes
 
   # Instead of generating the JavaScript string directly, we build up the
   # equivalent syntax tree and compile that, in pieces. You can see the
@@ -1148,15 +1153,15 @@ exports.Class = class Class extends Base
     name  = @determineName() or '_Class'
     name  = "_#{name}" if name.reserved
     lname = new Literal name
-    func  = new Code [], Block.wrap [@body]
+#    func  = new Code [], Block.wrap [@body]
     args  = []
-    o.classScope = func.makeScope o.scope
+#    o.classScope = func.makeScope o.scope
 
     @hoistDirectivePrologue()
     @setContext name
     @walkBody name, o
-    @ensureConstructor name
-    @addBoundFunctions o
+#    @ensureConstructor name
+#    @addBoundFunctions o
     @body.spaced = yes
     @body.expressions.push lname
 
@@ -1168,9 +1173,15 @@ exports.Class = class Class extends Base
 
     @body.expressions.unshift @directives...
 
-    klass = new Parens new Call func, args
-    klass = new Assign @variable, klass if @variable
-    klass.compileToFragments o
+    console.log 'body is now'
+    console.log @body
+    fragments = [@makeCode('class ')]
+    fragments = fragments.concat lname.compileToFragments o
+    fragments = fragments.concat @body.compileToFragments o
+    return fragments
+#    klass = new Parens new Call func, args
+#    klass = new Assign @variable, klass if @variable
+#    klass.compileToFragments o
 
 #### Assign
 

@@ -32,7 +32,7 @@ build = (cb) ->
 
 # Run a CoffeeScript through our node/coffee interpreter.
 run = (args, cb) ->
-  proc =         spawn 'node', ['bin/coffee'].concat(args)
+  proc =         spawn 'node', ['/usr/local/bin/coffee'].concat(args)
   proc.stderr.on 'data', (buffer) -> console.log buffer.toString()
   proc.on        'exit', (status) ->
     process.exit(1) if status != 0

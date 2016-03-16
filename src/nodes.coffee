@@ -606,6 +606,69 @@ exports.Value = class Value extends Base
         return new If new Existence(fst), snd, soak: on
       no
 
+#### ES6PrototypeVariable
+
+exports.ES6PrototypeVariable = class ES6PrototypeVariable extends Value
+  constructor: (base, props, tag) ->
+    #console.log "ES6PrototypeVariable\nbase=#{base}\nprops=#{props}\ntag=#{tag}"
+    super(base, props, tag)
+
+  compileNode: (o) ->
+    @base.front = @front
+    fragments = []
+    fragments.push @makeCode 'get '
+    [..., name] = @properties
+    fragments.push (name.compileToFragments o)...
+    fragments.push @makeCode '()'
+    fragments
+
+#### ES6PrototypeValueReturn
+
+exports.ES6PrototypeValueReturn = class ES6PrototypeValueReturn extends Base
+  constructor: (value) ->
+    #console.log "ES6PrototypeValueReturn\nvalue=#{value}"
+    super(value)
+    @value = value
+
+  compileNode: (o) ->
+    fragments = []
+    fragments.push @makeCode "{\n#{@tab}#{@tab}return "
+    o.indent += TAB
+    fragments.push (@value.compileToFragments o)...
+    o.indent -= TAB
+    fragments.push @makeCode ";\n#{@tab}}"
+    fragments
+
+#### ES6PrototypeVariable
+
+exports.ES6PrototypeVariable = class ES6PrototypeVariable extends Value
+  constructor: (base, props, tag) ->
+    #console.log "ES6PrototypeVariable\nbase=#{base}\nprops=#{props}\ntag=#{tag}"
+    super(base, props, tag)
+
+  compileNode: (o) ->
+    @base.front = @front
+    fragments = []
+    fragments.push @makeCode 'get '
+    [..., name] = @properties
+    fragments.push (name.compileToFragments o)...
+    fragments.push @makeCode '()'
+    fragments
+
+#### ES6PrototypeCode
+
+exports.ES6PrototypeCode = class ES6PrototypeCode extends Value
+  constructor: (base, props, tag) ->
+    #console.log "ES6PrototypeCode\nbase=#{base}\nprops=#{props}\ntag=#{tag}"
+    super(base, props, tag)
+
+  compileNode: (o) ->
+    @base.front = @front
+    fragments = []
+    [..., name] = @properties
+    fragments.push (name.compileToFragments o)...
+    fragments
+
 #### Comment
 
 # CoffeeScript passes through block comments as JavaScript block comments
@@ -1131,7 +1194,10 @@ exports.Class = class Class extends Base
           if func.bound
             assign.error 'cannot define a constructor as a bound function'
           if func instanceof Code
-            assign = @ctor = func
+            assign.value = @ctor = func
+            assign.es6_prototype_declaration = yes
+            func.es6_prototype_function_declaration = yes
+            assign.variable = new ES6PrototypeCode(new IdentifierLiteral(name), [new Literal 'constructor'])
           else
             @externalCtor = o.classScope.freeVariable 'ctor'
             assign = new Assign new IdentifierLiteral(@externalCtor), func
@@ -1139,8 +1205,15 @@ exports.Class = class Class extends Base
           if assign.variable.this
             func.static = yes
           else
-            acc = if base.isComplex() then new Index base else new Access base
-            assign.variable = new Value(new IdentifierLiteral(name), [(new Access new PropertyName 'prototype'), acc])
+            # luis.es6
+            assign.es6_prototype_declaration = yes
+            acc = if base.isComplex() then new Index base else new Value base
+            if func instanceof Code
+                func.es6_prototype_function_declaration = yes
+                assign.variable = new ES6PrototypeCode(new IdentifierLiteral(name), [(new Access new PropertyName 'prototype'), acc])
+            else
+                assign.value = new ES6PrototypeValueReturn assign.value
+                assign.variable = new ES6PrototypeVariable(new IdentifierLiteral(name), [(new Access new PropertyName 'prototype'), acc])
             if func instanceof Code and func.bound
               @boundFuncs.push base
               func.bound = no
@@ -1200,28 +1273,48 @@ exports.Class = class Class extends Base
     name  = @determineName()
     lname = new IdentifierLiteral name
     func  = new Code [], Block.wrap [@body]
+    func.es6_class_definition = yes
     args  = []
     o.classScope = func.makeScope o.scope
 
     @hoistDirectivePrologue()
     @setContext name
     @walkBody name, o
-    @ensureConstructor name
-    @addBoundFunctions o
+    @ensureConstructor name unless func.es6_class_definition
+    @addBoundFunctions o unless func.es6_class_definition
     @body.spaced = yes
-    @body.expressions.push lname
+    @body.expressions.push lname unless func.es6_class_definition
 
     if @parent
-      superClass = new IdentifierLiteral o.classScope.freeVariable 'superClass', reserve: no
-      @body.expressions.unshift new Extends lname, superClass
+      if func.es6_class_definition
+        superClass = new IdentifierLiteral o.classScope.freeVariable @getFullyQualifiedSuperClassName(), reserve: no
+      else
+        superClass = new IdentifierLiteral o.classScope.freeVariable 'superClass', reserve: no
+        @body.expressions.unshift new Extends lname, superClass
       func.params.push new Param superClass
       args.push @parent
 
     @body.expressions.unshift @directives...
 
-    klass = new Parens new Call func, args
-    klass = new Assign @variable, klass if @variable
-    klass.compileToFragments o
+    if func.es6_class_definition
+      answer = []
+      answer.push @makeCode 'class '
+      answer.push @makeCode @variable.base.value
+      answer.push @makeCode ' extends ' unless not @parent
+      for fragment, index in func.compileToFragments o
+          answer.push fragment
+      answer
+    else
+      klass = new Parens new Call func, args
+      klass = new Assign @variable, klass if @variable
+      klass.compileToFragments o
+
+  getFullyQualifiedSuperClassName: ->
+    baseClassName = @parent.base.value
+    if @parent.properties?.length > 0
+        #console.log(@parent.properties[0].name.value)
+        baseClassName = baseClassName + '.' + @parent.properties[0].name.value
+    baseClassName
 
 #### Assign
 
@@ -1282,7 +1375,11 @@ exports.Assign = class Assign extends Base
         compiledName.push @makeCode '"'
       return compiledName.concat @makeCode(": "), val
 
-    answer = compiledName.concat @makeCode(" #{ @context or '=' } "), val
+    if @es6_prototype_declaration
+       signToken = ''
+    else
+       signToken = '= '
+    answer = compiledName.concat @makeCode(" #{ @context or signToken }"), val
     if o.level <= LEVEL_LIST then answer else @wrapInBraces answer
 
   # Brief implementation of recursive pattern matching, when assigning array or
@@ -1451,6 +1548,8 @@ exports.Code = class Code extends Base
     @bound       = tag is 'boundfunc'
     @isGenerator = !!@body.contains (node) ->
       (node instanceof Op and node.isYield()) or node instanceof YieldReturn
+    @es6_class_definition = no
+    @es6_prototype_function_declaration = no
 
   children: ['params', 'body']
 
@@ -1466,17 +1565,59 @@ exports.Code = class Code extends Base
   # arrow, generates a wrapper that saves the current value of `this` through
   # a closure.
   compileNode: (o) ->
-
     if @bound and o.scope.method?.bound
       @context = o.scope.method.context
 
     # Handle bound functions early.
     if @bound and not @context
-      @context = '_this'
-      wrapper = new Code [new Param new IdentifierLiteral @context], new Block [this]
-      boundfunc = new Call(wrapper, [new ThisLiteral])
-      boundfunc.updateLocationDataIfMissing @locationData
-      return boundfunc.compileNode(o)
+      ###
+      luis.20160314 TODO
+
+      This is where we simplify lambda functions written in CoffeeScript like this:
+         delay(time_out, =>
+           @trigger('destroyed')
+           contact_table.update_numbers()
+         )
+
+      That are currently generated in ES5 like this:
+        return delay(time_out, (function(_this) {
+          return function() {
+            _this.trigger('destroyed');
+            return contact_table.update_numbers();
+          };
+        })(this));
+
+      To this in ES6:
+         delay(time_out, () => {
+           this.trigger('destroyed');
+           contact_table.update_numbers();
+         })
+
+      Another example in CoffeeScript:
+      onOpen: (iframe) =>
+        iframe.find('#name').val(@model.get('name') or "")
+
+      ES5:
+      onOpen: (function(_this) {
+        return function(iframe) {
+          return iframe.find('#name').val(_this.model.get('name') || "");
+        };
+      })(this)
+
+      ES6:
+      onOpen: (iframe) => {
+        iframe.find('#name').val(this.model.get('name') || "");
+      }
+      ###
+      @es6_needs_fat_arrow = yes
+      if @es6_needs_fat_arrow
+        @context = 'this'
+      else
+        @context = '_this'
+        wrapper = new Code [new Param new IdentifierLiteral @context], new Block [this]
+        boundfunc = new Call(wrapper, [new ThisLiteral])
+        boundfunc.updateLocationDataIfMissing @locationData
+        return boundfunc.compileNode(o)
 
     o.scope         = del(o, 'classScope') or @makeScope o.scope
     o.scope.shared  = del(o, 'sharedScope')
@@ -1515,20 +1656,35 @@ exports.Code = class Code extends Base
     @eachParamName (name, node) ->
       node.error "multiple parameters named #{name}" if name in uniqs
       uniqs.push name
-    @body.makeReturn() unless wasEmpty or @noReturn
-    code = 'function'
-    code += '*' if @isGenerator
-    code += ' ' + @name if @ctor
-    code += '('
+    @body.makeReturn() unless wasEmpty or @noReturn or @es6_class_definition
+    if @es6_class_definition
+        code = ''
+    else if @es6_prototype_function_declaration or @es6_needs_fat_arrow
+        code = ''
+        code += '*' if @isGenerator
+        code += @name if @ctor
+        code += '('
+    else
+        code = 'function'
+        code += '*' if @isGenerator
+        code += ' ' + @name if @ctor
+        code += '('
     answer = [@makeCode(code)]
     for p, i in params
       if i then answer.push @makeCode ", "
       answer.push p...
-    answer.push @makeCode ') {'
+    if @es6_class_definition
+        answer.push @makeCode ' {\n'
+    else if @es6_needs_fat_arrow
+        answer.push @makeCode ') => {'
+    else
+        answer.push @makeCode ') {'
     answer = answer.concat(@makeCode("\n"), @body.compileWithDeclarations(o), @makeCode("\n#{@tab}")) unless @body.isEmpty()
     answer.push @makeCode '}'
 
     return [@makeCode(@tab), answer...] if @ctor
+    if @es6_class_definition
+        return answer
     if @front or (o.level >= LEVEL_ACCESS) then @wrapInBraces answer else answer
 
   eachParamName: (iterator) ->

@@ -226,6 +226,7 @@ exports.Base = class Base
 exports.Block = class Block extends Base
   constructor: (nodes) ->
     @expressions = compact flatten nodes or []
+    @es6_class_definition = no
 
   children: ['expressions']
 
@@ -357,7 +358,7 @@ exports.Block = class Block extends Base
       @expressions = rest
     post = @compileNode o
     {scope} = o
-    if scope.expressions is this
+    if scope.expressions is this and !@es6_class_definition
       declars = o.scope.hasDeclarations()
       assigns = scope.hasAssignments
       if declars or assigns
@@ -501,6 +502,7 @@ exports.Value = class Value extends Base
     @base       = base
     @properties = props or []
     @[tag]      = true if tag
+    @es6_static_function = no
     return this
 
   children: ['base', 'properties']
@@ -582,10 +584,14 @@ exports.Value = class Value extends Base
   compileNode: (o) ->
     @base.front = @front
     props = @properties
-    fragments = @base.compileToFragments o, (if props.length then LEVEL_ACCESS else null)
-    if props.length and SIMPLENUM.test fragmentsToText fragments
-      fragments.push @makeCode '.'
+    if not @es6_static_function or o.scope.method.klass
+      fragments = @base.compileToFragments o, (if props.length then LEVEL_ACCESS else null)
+      if props.length and SIMPLENUM.test fragmentsToText fragments
+        fragments.push @makeCode '.'
+    else
+      fragments = []
     for prop in props
+      prop.es6_static_function = @es6_static_function
       fragments.push (prop.compileToFragments o)...
     fragments
 
@@ -872,6 +878,7 @@ exports.Access = class Access extends Base
   constructor: (@name, tag) ->
     @name.asKey = yes
     @soak  = tag is 'soak'
+    @es6_static_function = no
 
   children: ['name']
 
@@ -881,6 +888,8 @@ exports.Access = class Access extends Base
     if node instanceof PropertyName
       if node.value in JS_FORBIDDEN
         [@makeCode('["'), name..., @makeCode('"]')]
+      else if @es6_static_function and not o.scope.method.klass
+        [name...]
       else
         [@makeCode('.'), name...]
     else
@@ -1272,7 +1281,9 @@ exports.Class = class Class extends Base
 
     name  = @determineName()
     lname = new IdentifierLiteral name
-    func  = new Code [], Block.wrap [@body]
+    block = Block.wrap [@body]
+    block.es6_class_definition = yes
+    func  = new Code [], block
     func.es6_class_definition = yes
     args  = []
     o.classScope = func.makeScope o.scope
@@ -1323,6 +1334,9 @@ exports.Class = class Class extends Base
 exports.Assign = class Assign extends Base
   constructor: (@variable, @value, @context, options = {}) ->
     {@param, @subpattern, @operatorToken} = options
+    if @variable.base instanceof ThisLiteral and @variable.properties and @variable.properties.length == 1 and @value instanceof Code
+      @variable.es6_static_function = yes
+      @value.es6_static_function = yes
 
   children: ['variable', 'value']
 
@@ -1377,6 +1391,9 @@ exports.Assign = class Assign extends Base
 
     if @es6_prototype_declaration
        signToken = ''
+    else if @value.es6_static_function and not o.scope.method.klass
+       signToken = ''
+       compiledName.unshift @makeCode "static "
     else
        signToken = '= '
     answer = compiledName.concat @makeCode(" #{ @context or signToken }"), val
@@ -1550,6 +1567,7 @@ exports.Code = class Code extends Base
       (node instanceof Op and node.isYield()) or node instanceof YieldReturn
     @es6_class_definition = no
     @es6_prototype_function_declaration = no
+    @es6_static_function = no
 
   children: ['params', 'body']
 
@@ -1659,7 +1677,7 @@ exports.Code = class Code extends Base
     @body.makeReturn() unless wasEmpty or @noReturn or @es6_class_definition
     if @es6_class_definition
         code = ''
-    else if @es6_prototype_function_declaration or @es6_needs_fat_arrow
+    else if @es6_prototype_function_declaration or @es6_needs_fat_arrow or (@es6_static_function and o.scope.method.klass)
         code = ''
         code += '*' if @isGenerator
         code += @name if @ctor

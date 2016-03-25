@@ -756,9 +756,20 @@ exports.Call = class Call extends Base
 
     fragments = []
     if this instanceof SuperCall
-      preface = @superReference(o) + ".call(#{@superThis(o)}"
-      if compiledArgs.length then preface += ", "
-      fragments.push @makeCode preface
+      es6_super_call = yes
+      if es6_super_call
+        method = o.scope.namedMethod()
+        if method?.klass
+          {klass, name, variable} = method
+          fragments = name.compileToFragments o
+          fragments.unshift @makeCode "super."
+        else
+          fragments.push @makeCode "super"
+        fragments.push @makeCode "("
+      else
+        preface = @superReference(o) + ".call(#{@superThis(o)}"
+        if compiledArgs.length then preface += ", "
+        fragments.push @makeCode preface
     else
       if @isNew then fragments.push @makeCode 'new '
       fragments.push @variable.compileToFragments(o, LEVEL_ACCESS)...
@@ -1298,7 +1309,7 @@ exports.Class = class Class extends Base
 
     if @parent
       if func.es6_class_definition
-        superClass = new IdentifierLiteral o.classScope.freeVariable @getFullyQualifiedSuperClassName(), reserve: no
+        superClass = new IdentifierLiteral @getFullyQualifiedSuperClassName()
       else
         superClass = new IdentifierLiteral o.classScope.freeVariable 'superClass', reserve: no
         @body.expressions.unshift new Extends lname, superClass

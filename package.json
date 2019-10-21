@@ -33,7 +33,7 @@
     "url": "git://github.com/jashkenas/coffeescript.git"
   },
   "devDependencies": {
-    "uglify-js": "~2.2",
+    "uglify-js": "~3.6",
     "jison": ">=0.2.0",
     "highlight.js": "~8.0.0",
     "underscore": "~1.5.2",
